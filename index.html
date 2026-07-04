@@ -24,26 +24,23 @@
             touch-action: none; 
         }
         canvas {
-            border: 2px solid #333;
+            display: block;
             background-color: #111;
             cursor: pointer;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
             -webkit-user-select: none;
             user-select: none;
             outline: none;
             -webkit-tap-highlight-color: transparent;
-            /* スマートフォンの表示領域に合わせて最適化 */
+            /* 画面全体にフィットさせる設定 */
             width: 100vw;
-            height: 75vw; /* 4:3のアスペクト比を維持 (600/800 = 0.75) */
-            max-width: calc(100vh * 4 / 3);
-            max-height: 100vh;
+            height: 100vh;
             box-sizing: border-box;
         }
     </style>
 </head>
 <body>
 
-    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    <canvas id="gameCanvas"></canvas>
 
 <script>
 const canvas = document.getElementById("gameCanvas");
@@ -164,8 +161,9 @@ const setBtnSize = 50;
 const slotSize = 50;
 const slotSpacing = 10;
 const totalBeltWidth = (slotSize * 6) + (slotSpacing * 5);
-const beltX = (canvas.width - totalBeltWidth) / 2;
-const beltY = canvas.height - slotSize - 20;
+// 画面リサイズに対応するため、ベルト位置は関数内で動的に計算します
+let beltX = 0;
+let beltY = 0;
 
 // オーディオトグル状態
 let isBgmOn = true;
@@ -199,6 +197,19 @@ const player = {
     maxSlots: 5,         // インベントリの最大スロット数（拡張可能）
     activeSlot: 0       // ツールベルトの現在選択中スロット(0~5)
 };
+
+// --- 動的リサイズ関数 (縦・横それぞれの全画面に対応) ---
+function resizeCanvas() {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+    
+    // ツールベルトの位置を画面サイズに合わせて動的に再計算
+    beltX = (canvas.width - totalBeltWidth) / 2;
+    beltY = canvas.height - slotSize - 20;
+}
+window.addEventListener("resize", resizeCanvas);
+// 最初の読み込み時に実行
+resizeCanvas();
 
 // インベントリにアイテムを追加するヘルパー関数
 function addItemToInventory(itemKey) {
@@ -338,29 +349,6 @@ function executeExport() {
     a.click();
 }
 
-function executeImport() {
-    const input = document.createElement("input");
-    input.type = "file";
-    input.accept = ".txt";
-    input.onchange = (e) => {
-        const file = e.target.files[0];
-        if (!file) return;
-        const reader = new FileReader();
-        reader.onload = (evt) => {
-            try {
-                const data = JSON.parse(evt.target.result);
-                if (loadSaveDataObject(data)) {
-                    showUiLog("impDone");
-                }
-            } catch(err) {
-                alert("Invalid save data file.");
-            }
-        };
-        reader.readAsText(file);
-    };
-    input.click();
-}
-
 // --- マップ自動生成 ---
 function generateMap() {
     for (let x = 0; x < MAP_WIDTH; x++) {
@@ -410,6 +398,29 @@ function generateMap() {
             };
         }
     }
+}
+
+function executeImport() {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".txt";
+    input.onchange = (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (evt) => {
+            try {
+                const data = JSON.parse(evt.target.result);
+                if (loadSaveDataObject(data)) {
+                    showUiLog("impDone");
+                }
+            } catch(err) {
+                alert("Invalid save data file.");
+            }
+        };
+        reader.readAsText(file);
+    };
+    input.click();
 }
 
 // 指定した座標にソリッドブロック（空気・流体以外）があるか判定するヘルパー関数
@@ -1244,7 +1255,6 @@ function draw() {
                 ctx.fillStyle = "#ccc";
                 ctx.font = "10px sans-serif";
                 ctx.textAlign = "center";
-                // ローカライズ辞書から動的に名前を切断取得
                 const itemName = item.name[currentLang];
                 ctx.fillText(itemName.substring(0, 5), ix + iSize / 2, iy + iSize - 20);
 
@@ -1321,7 +1331,6 @@ function draw() {
         ctx.textBaseline = "top";
         ctx.fillText(SYS_TEXTS.setTitle[currentLang], boxX + boxW / 2, boxY + 22);
 
-        // 閉じる[✕]ボタン
         ctx.fillStyle = "rgba(255,255,255,0.1)";
         ctx.beginPath();
         ctx.roundRect(boxX + boxW - 45, boxY + 15, 30, 30, 6);
@@ -1331,7 +1340,6 @@ function draw() {
         ctx.textBaseline = "middle";
         ctx.fillText("✕", boxX + boxW - 30, boxY + 30);
 
-        // 各種設定メニューボタンの配列描画（一括構造化データから動的マッピング）
         const buttons = [
             { text: SYS_TEXTS.saveBtn[currentLang], color: "#4682B4" },
             { text: SYS_TEXTS.loadBtn[currentLang], color: "#4682B4" },
@@ -1401,7 +1409,7 @@ function gameLoop() {
     requestAnimationFrame(gameLoop);
 }
 
-// 初期カメラ位置を地表にセット
+// 初期カメラ位置をリサイズ後に合わせるために調整
 cameraX = player.x - canvas.width / 2 + player.width / 2;
 cameraY = player.y - canvas.height / 2 + player.height / 2;
 
