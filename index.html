@@ -1,0 +1,1414 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>2D 鉱山開発ゲーム / 2D Mining Game</title>
+    <style>
+        body {
+            margin: 0;
+            background-color: #1a1a1a;
+            color: #fff;
+            font-family: 'Helvetica Neue', Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            overflow: hidden;
+            -webkit-user-select: none;
+            -moz-user-select: none;
+            -ms-user-select: none;
+            user-select: none;
+            -webkit-tap-highlight-color: rgba(0,0,0,0);
+            touch-action: none; 
+        }
+        canvas {
+            border: 2px solid #333;
+            background-color: #111;
+            cursor: pointer;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+            -webkit-user-select: none;
+            user-select: none;
+            outline: none;
+            -webkit-tap-highlight-color: transparent;
+            /* スマートフォンの表示領域に合わせて最適化 */
+            width: 100vw;
+            height: 75vw; /* 4:3のアスペクト比を維持 (600/800 = 0.75) */
+            max-width: calc(100vh * 4 / 3);
+            max-height: 100vh;
+            box-sizing: border-box;
+        }
+    </style>
+</head>
+<body>
+
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+
+<script>
+const canvas = document.getElementById("gameCanvas");
+const ctx = canvas.getContext("2d");
+
+// --- ゲーム設定 ---
+const BLOCK_SIZE = 40;       // 1ブロックのサイズ(px)
+const MAP_WIDTH = 40;        // マップの横幅（ブロック数）
+const MAP_HEIGHT = 80;       // マップの縦（深さ）（ブロック数）
+
+// --- ズーム機能用の変数 ---
+let currentScale = 1.0;
+const MIN_SCALE = 0.5;
+const MAX_SCALE = 2.0;
+let initialPinchDist = null;
+
+// --- グローバル言語設定 ---
+let currentLang = "ja"; // "ja" か "en" のみ。要素が増えてもここを切り替えるだけで全連動します
+
+// --- 一括ローカライズ構造：共通システムテキストマスタ ---
+const SYS_TEXTS = {
+    invTitle:     { ja: "インベントリ", en: "Inventory" },
+    slotsInUse:   { ja: "スロット使用中", en: "Slots Used" },
+    setTitle:     { ja: "設定メニュー", en: "Settings Menu" },
+    saveBtn:      { ja: "ローカルセーブ", en: "Local Save" },
+    loadBtn:      { ja: "ローカルロード", en: "Local Load" },
+    expBtn:       { ja: "データエクスポート", en: "Export Data" },
+    impBtn:       { ja: "データインポート", en: "Import Data" },
+    langBtn:      { ja: "Language: 日本語", en: "Language: English" },
+    updateBtn:    { ja: "最新版へ更新確認", en: "Check for Updates" },
+    bgmOn:        { ja: "BGM: オン", en: "BGM: ON" },
+    bgmOff:       { ja: "BGM: オフ", en: "BGM: OFF" },
+    seOn:         { ja: "SE: オン", en: "SFX: ON" },
+    seOff:        { ja: "SE: オフ", en: "SFX: OFF" },
+    donateBtn:    { ja: "開発者を応援 (寄付)", en: "Support Creator (Donate)" },
+    beltHint:     { ja: "手に入れたアイテムをタップするとツールベルトに装着（再設置用）できます", en: "Tap an item to equip it to the toolbelt for re-placement." },
+    beltTarget:   { ja: "装着先スロット (1 ～ 5) を選んでタップしてください", en: "Select a toolbelt slot (1-5) to equip." },
+    saveDone:     { ja: "ゲームデータを保存しました！", en: "Game data saved locally!" },
+    loadDone:     { ja: "ゲームデータをロードしました！", en: "Game data loaded successfully!" },
+    loadFailed:   { ja: "セーブデータが見つかりません。", en: "No save data found." },
+    updateLog:    { ja: "すでに最新バージョンです。", en: "You are on the latest version." },
+    impDone:      { ja: "インポートが完了しました！", en: "Data imported successfully!" }
+};
+
+// --- 一括ローカライズ構造：ブロックデータ定義（名前を言語別辞書に内包） ---
+const BLOCK_TYPES = {
+    0: { name: { ja: "空気", en: "Air" }, hp: 0 },
+    1: { name: { ja: "土", en: "Dirt" }, hp: 3,  baseColor: "#6B4423", accentColor: "#8B5A2B", pattern: "dirt", itemKey: "dirt" },
+    2: { name: { ja: "石", en: "Stone" }, hp: 6,  baseColor: "#555555", accentColor: "#777777", pattern: "stone", itemKey: "stone" },
+    3: { name: { ja: "銅鉱石", en: "Copper Ore" }, hp: 5,  baseColor: "#555555", accentColor: "#D2691E", pattern: "ore", itemKey: "copper" },
+    4: { name: { ja: "鉄鉱石", en: "Iron Ore" }, hp: 8,  baseColor: "#444444", accentColor: "#B0C4DE", pattern: "ore", itemKey: "iron" },
+    5: { name: { ja: "金鉱石", en: "Gold Ore" }, hp: 15, baseColor: "#333333", accentColor: "#FFD700", pattern: "ore", itemKey: "gold" },
+    6: { name: { ja: "ミスリル", en: "Mithril" }, hp: 25, baseColor: "#1A2344", accentColor: "#4D66CC", pattern: "ore", itemKey: "mithril" },
+    7: { name: { ja: "石炭", en: "Coal" }, hp: 4,  baseColor: "#2A2A2A", accentColor: "#111111", pattern: "ore", itemKey: "coal" },
+    8: { name: { ja: "ルビー", en: "Ruby" }, hp: 18, baseColor: "#3A222D", accentColor: "#FF1493", pattern: "gem", itemKey: "ruby" },
+    9: { name: { ja: "サファイア", en: "Sapphire" }, hp: 18, baseColor: "#222D3A", accentColor: "#00BFFF", pattern: "gem", itemKey: "sapphire" },
+   10: { name: { ja: "エメラルド", en: "Emerald" }, hp: 20, baseColor: "#223A2D", accentColor: "#00FF7F", pattern: "gem", itemKey: "emerald" },
+   11: { name: { ja: "水", en: "Water" }, hp: 0,  baseColor: "rgba(30, 144, 255, 0.6)", accentColor: "rgba(70, 130, 180, 0.8)", pattern: "fluid", itemKey: "water_bucket" },
+   12: { name: { ja: "原油", en: "Crude Oil" }, hp: 0,  baseColor: "rgba(20, 20, 20, 0.9)", accentColor: "rgba(40, 40, 40, 0.95)", pattern: "fluid", itemKey: "oil_bucket" }
+};
+
+// 反対に itemKey から BLOCK_TYPES の ID を引くための逆引き用マップ
+const ITEM_TO_BLOCK_ID = {
+    dirt: 1,
+    stone: 2,
+    copper: 3,
+    iron: 4,
+    gold: 5,
+    mithril: 6,
+    coal: 7,
+    ruby: 8,
+    sapphire: 9,
+    emerald: 10,
+    water_bucket: 11,
+    oil_bucket: 12
+};
+
+// --- 一括ローカライズ構造：アイテムマスターデータ（名前を言語別辞書に内包） ---
+const ITEM_MASTER = {
+    dirt: { name: { ja: "土", en: "Dirt" }, baseColor: "#6B4423", accentColor: "#8B5A2B", pattern: "dirt" },
+    stone: { name: { ja: "石", en: "Stone" }, baseColor: "#555555", accentColor: "#777777", pattern: "stone" },
+    copper: { name: { ja: "銅鉱石", en: "Copper Ore" }, baseColor: "#555555", accentColor: "#D2691E", pattern: "ore" },
+    iron: { name: { ja: "鉄鉱石", en: "Iron Ore" }, baseColor: "#444444", accentColor: "#B0C4DE", pattern: "ore" },
+    gold: { name: { ja: "金鉱石", en: "Gold Ore" }, baseColor: "#333333", accentColor: "#FFD700", pattern: "ore" },
+    mithril: { name: { ja: "ミスリル", en: "Mithril" }, baseColor: "#1A2344", accentColor: "#4D66CC", pattern: "ore" },
+    coal: { name: { ja: "石炭", en: "Coal" }, baseColor: "#2A2A2A", accentColor: "#111111", pattern: "ore" },
+    ruby: { name: { ja: "ルビー", en: "Ruby" }, baseColor: "#3A222D", accentColor: "#FF1493", pattern: "gem" },
+    sapphire: { name: { ja: "サファイア", en: "Sapphire" }, baseColor: "#222D3A", accentColor: "#00BFFF", pattern: "gem" },
+    emerald: { name: { ja: "エメラルド", en: "Emerald" }, baseColor: "#223A2D", accentColor: "#00FF7F", pattern: "gem" },
+    water_bucket: { name: { ja: "水のバケツ", en: "Water Bucket" }, baseColor: "#1E90FF", accentColor: "#4682B4", pattern: "bucket_fluid" },
+    oil_bucket: { name: { ja: "原油のバケツ", en: "Oil Bucket" }, baseColor: "#141414", accentColor: "#282828", pattern: "bucket_fluid" }
+};
+
+// ツールベルト構成定義（初期状態はスロット0:ツルハシ、スロット1:空のバケツ、以外は空欄 null）
+const TOOLBELT_SLOTS = [
+    { type: "tool", name: { ja: "ツルハシ", en: "Pickaxe" }, icon: "⛏️" },
+    { type: "bucket", name: { ja: "バケツ", en: "Bucket" }, icon: "🪣" },
+    null,
+    null,
+    null,
+    null
+];
+
+// --- UI用変数・状態マネジメント ---
+let isInventoryOpen = false;
+let isSettingsOpen = false; // 設定画面の開閉フラグ
+let selectedInventoryIndex = null; // インベントリの配列インデックスを選択
+
+// UI要素の判定用座標
+const invBtnX = 20;
+const invBtnY = 20;
+const invBtnSize = 50;
+
+const setBtnX = 90; // 設定ボタンの位置
+const setBtnY = 20;
+const setBtnSize = 50;
+
+const slotSize = 50;
+const slotSpacing = 10;
+const totalBeltWidth = (slotSize * 6) + (slotSpacing * 5);
+const beltX = (canvas.width - totalBeltWidth) / 2;
+const beltY = canvas.height - slotSize - 20;
+
+// オーディオトグル状態
+let isBgmOn = true;
+let isSeOn = true;
+
+// 通知ログ表示用
+let uiLogKey = ""; // 表示したいSYS_TEXTSのキーを保持するように変更
+let uiLogTimer = 0;
+function showUiLog(textKey) {
+    uiLogKey = textKey;
+    uiLogTimer = 120; // 約2秒間表示
+}
+
+// --- マップ配列 ---
+const map = [];
+
+// --- プレイヤーオブジェクト ---
+const player = {
+    x: 20 * BLOCK_SIZE, // マップ中央の地上からスタート
+    y: 8 * BLOCK_SIZE,
+    width: 26,
+    height: 38,         
+    speed: 2,
+    targetBlockX: null, 
+    targetBlockY: null, 
+    isMining: false,
+    swingTimer: 0,       // ツルハシ・ツールを振るビジュアル用タイマー
+    facing: "right",
+    // インベントリシステム（最大スロットオブジェクトを入れる配列、各スタック最大50個）
+    inventory: [],
+    maxSlots: 5,         // インベントリの最大スロット数（拡張可能）
+    activeSlot: 0       // ツールベルトの現在選択中スロット(0~5)
+};
+
+// インベントリにアイテムを追加するヘルパー関数
+function addItemToInventory(itemKey) {
+    if (!itemKey) return;
+
+    // 1. すでに同じアイテムがあって、かつ50個未満のスタックがあるか探す
+    for (let i = 0; i < player.inventory.length; i++) {
+        if (player.inventory[i].itemKey === itemKey && player.inventory[i].count < 50) {
+            player.inventory[i].count++;
+            return;
+        }
+    }
+
+    // 2. 新規スタックとして追加（プレイヤーの現在の最大スロット数が上限）
+    if (player.inventory.length < player.maxSlots) {
+        player.inventory.push({
+            itemKey: itemKey,
+            count: 1
+        });
+    }
+}
+
+// インベントリから特定のアイテムを消費するヘルパー関数
+function consumeItemFromInventory(itemKey) {
+    if (!itemKey) return false;
+
+    // 後ろのスロット、または個数が少ないスタックから優先して減算
+    for (let i = player.inventory.length - 1; i >= 0; i--) {
+        if (player.inventory[i].itemKey === itemKey) {
+            player.inventory[i].count--;
+            // 個数が0になったらスロットから削除して詰める
+            if (player.inventory[i].count <= 0) {
+                player.inventory.splice(i, 1);
+            }
+            return true;
+        }
+    }
+    return false;
+}
+
+// 特定のitemKeyの総所持数をカウントする（ツールベルトの表示同期用）
+function getInventoryItemCount(itemKey) {
+    let total = 0;
+    player.inventory.forEach(slot => {
+        if (slot.itemKey === itemKey) {
+            total += slot.count;
+        }
+    });
+    return total;
+}
+
+// --- セーブ・ロード・インポート・エクスポート用ロジック ---
+function getSaveDataObject() {
+    // 保存対象のコンパクトなオブジェクトを作成
+    const mapData = [];
+    for (let x = 0; x < MAP_WIDTH; x++) {
+        mapData[x] = [];
+        for (let y = 0; y < MAP_HEIGHT; y++) {
+            mapData[x][y] = {
+                id: map[x][y].id,
+                hp: map[x][y].hp,
+                fl: map[x][y].fluidLevel
+            };
+        }
+    }
+    return {
+        player: {
+            x: player.x,
+            y: player.y,
+            maxSlots: player.maxSlots,
+            inv: player.inventory
+        },
+        map: mapData
+    };
+}
+
+function loadSaveDataObject(obj) {
+    if (!obj || !obj.player || !obj.map) return false;
+    
+    // プレイヤー復元
+    player.x = obj.player.x;
+    player.y = obj.player.y;
+    player.maxSlots = obj.player.maxSlots || 5;
+    player.inventory = obj.player.inv || [];
+    player.targetBlockX = null;
+    player.targetBlockY = null;
+    player.isMining = false;
+
+    // マップ復元
+    for (let x = 0; x < MAP_WIDTH; x++) {
+        for (let y = 0; y < MAP_HEIGHT; y++) {
+            const blockData = obj.map[x][y];
+            map[x][y] = {
+                id: blockData.id,
+                hp: blockData.hp,
+                fluidLevel: blockData.fl || 0.0
+            };
+        }
+    }
+    return true;
+}
+
+function executeLocalSave() {
+    try {
+        const data = getSaveDataObject();
+        localStorage.setItem("mining_game_v1_save", JSON.stringify(data));
+        showUiLog("saveDone");
+    } catch(e) {
+        console.error(e);
+    }
+}
+
+// ローカルにロード
+function executeLocalLoad() {
+    const raw = localStorage.getItem("mining_game_v1_save");
+    if (!raw) {
+        showUiLog("loadFailed");
+        return;
+    }
+    try {
+        const data = JSON.parse(raw);
+        if (loadSaveDataObject(data)) {
+            showUiLog("loadDone");
+        }
+    } catch(e) {
+        console.error(e);
+    }
+}
+
+function executeExport() {
+    const data = getSaveDataObject();
+    const txt = JSON.stringify(data);
+    const blob = new Blob([txt], { type: "text/plain" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "mining_save.txt";
+    a.click();
+}
+
+function executeImport() {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".txt";
+    input.onchange = (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (evt) => {
+            try {
+                const data = JSON.parse(evt.target.result);
+                if (loadSaveDataObject(data)) {
+                    showUiLog("impDone");
+                }
+            } catch(err) {
+                alert("Invalid save data file.");
+            }
+        };
+        reader.readAsText(file);
+    };
+    input.click();
+}
+
+// --- マップ自動生成 ---
+function generateMap() {
+    for (let x = 0; x < MAP_WIDTH; x++) {
+        map[x] = [];
+        for (let y = 0; y < MAP_HEIGHT; y++) {
+            let id = 0;
+            let fluidLevel = 0.0;
+            
+            if (y >= 10 && y < 13) {
+                id = 1; 
+            } else if (y >= 13 && y < 30) {
+                let r = Math.random();
+                if (r < 0.06) id = 3;       // 銅鉱石
+                else if (r < 0.14) id = 7;  // 石炭
+                else if (r < 0.02) {        // 水たまりの生成
+                    id = 11;
+                    fluidLevel = 1.0;
+                }
+                else if (r < 0.30) id = 2;  // 石
+                else id = 1;                // 土
+            } else if (y >= 30 && y < 60) {
+                let r = Math.random();
+                if (r < 0.10) id = 4;       // 鉄鉱石
+                else if (r < 0.03) id = 9;  // サファイア
+                else if (r < 0.03) id = 10; // エメラルド
+                else if (r < 0.01) {        // 地下水
+                    id = 11;
+                    fluidLevel = 1.0;
+                }
+                else id = 2;                // 石
+            } else if (y >= 60) {
+                let r = Math.random();
+                if (r < 0.07) id = 5;       // 金鉱石
+                else if (r < 0.04) id = 6;  // ミスリル
+                else if (r < 0.03) id = 8;  // ルビー
+                else if (r < 0.02) {        // 原油溜まり
+                    id = 12;
+                    fluidLevel = 1.0;
+                }
+                else id = 2;                // 石
+            }
+
+            map[x][y] = {
+                id: id,
+                hp: BLOCK_TYPES[id].hp,
+                fluidLevel: fluidLevel // 流体の量 (0.0 〜 1.0)
+            };
+        }
+    }
+}
+
+// 指定した座標にソリッドブロック（空気・流体以外）があるか判定するヘルパー関数
+function isSolid(worldX, worldY) {
+    const gx = Math.floor(worldX / BLOCK_SIZE);
+    const gy = Math.floor(worldY / BLOCK_SIZE);
+    if (gx < 0 || gx >= MAP_WIDTH || gy < 0 || gy >= MAP_HEIGHT) return true; // マップ外は壁扱い
+    return map[gx][gy].id !== 0 && map[gx][gy].id !== 11 && map[gx][gy].id !== 12;
+}
+
+// テラリア風の動的流体物理シミュレーション (毎フレーム呼び出し)
+function updateFluids() {
+    const flowAmount = [];
+    for (let x = 0; x < MAP_WIDTH; x++) {
+        flowAmount[x] = new Float32Array(MAP_HEIGHT);
+    }
+
+    const MIN_FLOW = 0.005;
+    const MAX_LEVEL = 1.0;
+
+    for (let y = 0; y < MAP_HEIGHT - 1; y++) {
+        for (let x = 0; x < MAP_WIDTH; x++) {
+            const current = map[x][y];
+            if ((current.id === 11 || current.id === 12) && current.fluidLevel > 0) {
+                const typeId = current.id;
+                let val = current.fluidLevel;
+
+                const down = map[x][y + 1];
+                if (down.id === 0 || down.id === typeId) {
+                    const room = MAX_LEVEL - down.fluidLevel;
+                    if (room > 0) {
+                        const flow = Math.min(val, room);
+                        flowAmount[x][y] -= flow;
+                        flowAmount[x][y + 1] += flow;
+                        val -= flow;
+                    }
+                }
+
+                if (val < MIN_FLOW) continue;
+
+                let leftOpen = x > 0 && (map[x - 1][y].id === 0 || map[x - 1][y].id === typeId);
+                let rightOpen = x < MAP_WIDTH - 1 && (map[x + 1][y].id === 0 || map[x + 1][y].id === typeId);
+
+                if (leftOpen && rightOpen) {
+                    const leftVal = map[x - 1][y].fluidLevel;
+                    const rightVal = map[x + 1][y].fluidLevel;
+                    const average = (val + leftVal + rightVal) / 3;
+
+                    if (val > average) {
+                        const toLeft = Math.max(0, average - leftVal);
+                        const toRight = Math.max(0, average - rightVal);
+                        flowAmount[x][y] -= (toLeft + toRight);
+                        flowAmount[x - 1][y] += toLeft;
+                        flowAmount[x + 1][y] += toRight;
+                    }
+                } else if (leftOpen) {
+                    const leftVal = map[x - 1][y].fluidLevel;
+                    const average = (val + leftVal) / 2;
+                    if (val > average) {
+                        const toLeft = average - leftVal;
+                        flowAmount[x][y] -= toLeft;
+                        flowAmount[x - 1][y] += toLeft;
+                    }
+                } else if (rightOpen) {
+                    const rightVal = map[x + 1][y].fluidLevel;
+                    const average = (val + rightVal) / 2;
+                    if (val > average) {
+                        const toRight = average - rightVal;
+                        flowAmount[x][y] -= toRight;
+                        flowAmount[x + 1][y] += toRight;
+                    }
+                }
+            }
+        }
+    }
+
+    for (let x = 0; x < MAP_WIDTH; x++) {
+        for (let y = 0; y < MAP_HEIGHT; y++) {
+            const block = map[x][y];
+            const change = flowAmount[x][y];
+            if (change !== 0) {
+                if (block.id === 0 && change > 0) {
+                    if (y > 0 && (map[x][y - 1].id === 11 || map[x][y - 1].id === 12)) block.id = map[x][y - 1].id;
+                    else if (x > 0 && (map[x - 1][y].id === 11 || map[x - 1][y].id === 12)) block.id = map[x - 1][y].id;
+                    else if (x < MAP_WIDTH - 1 && (map[x + 1][y].id === 11 || map[x + 1][y].id === 12)) block.id = map[x + 1][y].id;
+                    else block.id = 11;
+                }
+                
+                block.fluidLevel += change;
+
+                if (block.fluidLevel < MIN_FLOW) {
+                    block.fluidLevel = 0;
+                    if (block.id === 11 || block.id === 12) {
+                        block.id = 0;
+                    }
+                } else if (block.fluidLevel > MAX_LEVEL) {
+                    block.fluidLevel = MAX_LEVEL;
+                }
+            }
+        }
+    }
+}
+
+// タップ・クリック共通の入力処理ロジック
+function handleInput(clientX, clientY) {
+    const rect = canvas.getBoundingClientRect();
+    
+    const baseScaleX = canvas.width / rect.width;
+    const baseScaleY = canvas.height / rect.height;
+
+    let mouseX = (clientX - rect.left) * baseScaleX;
+    let mouseY = (clientY - rect.top) * baseScaleY;
+
+    // --- インベントリボタンのタップ判定 ---
+    if (mouseX >= invBtnX && mouseX <= invBtnX + invBtnSize && mouseY >= invBtnY && mouseY <= invBtnY + invBtnSize) {
+        if (isSettingsOpen) isSettingsOpen = false;
+        isInventoryOpen = !isInventoryOpen;
+        selectedInventoryIndex = null;
+        return;
+    }
+
+    // --- 設定ボタン（⚙️）のタップ判定 ---
+    if (mouseX >= setBtnX && mouseX <= setBtnX + setBtnSize && mouseY >= setBtnY && mouseY <= setBtnY + setBtnSize) {
+        if (isInventoryOpen) isInventoryOpen = false;
+        isSettingsOpen = !isSettingsOpen;
+        return;
+    }
+
+    // --- 設定画面が開いている時のUI内タップ判定 ---
+    if (isSettingsOpen) {
+        const boxW = 400;
+        const boxH = 480;
+        const boxX = (canvas.width - boxW) / 2;
+        const boxY = (canvas.height - boxH) / 2;
+
+        // ✕ボタン判定
+        if (mouseX >= boxX + boxW - 45 && mouseX <= boxX + boxW - 15 && mouseY >= boxY + 15 && mouseY <= boxY + 45) {
+            isSettingsOpen = false;
+            return;
+        }
+
+        // 各種設定項目のボタン領域（縦一列に配置されたボタンのタップ判定）
+        const btnW = 320;
+        const btnH = 36;
+        const sX = boxX + 40;
+        const startY = boxY + 70;
+        const stepY = 44;
+
+        // 各ボタンのインデックスに応じた処理
+        for (let i = 0; i < 9; i++) {
+            const bY = startY + i * stepY;
+            if (mouseX >= sX && mouseX <= sX + btnW && mouseY >= bY && mouseY <= bY + btnH) {
+                if (i === 0) executeLocalSave();
+                if (i === 1) executeLocalLoad();
+                if (i === 2) executeExport();
+                if (i === 3) executeImport();
+                if (i === 4) currentLang = (currentLang === "ja") ? "en" : "ja"; // 言語切り替え
+                if (i === 5) showUiLog("updateLog");                            // 最新版確認
+                if (i === 6) { isBgmOn = !isBgmOn; console.log(`BGM toggled: ${isBgmOn}`); }
+                if (i === 7) { isSeOn = !isSeOn; console.log(`SE toggled: ${isSeOn}`); }
+                if (i === 8) window.open("https://example.com/donate", "_blank"); // 寄付リンク
+                return;
+            }
+        }
+        return;
+    }
+
+    // --- インベントリ画面が開いている時のUI内タップ判定 ---
+    if (isInventoryOpen) {
+        const boxW = 550;
+        const boxH = 380;
+        const boxX = (canvas.width - boxW) / 2;
+        const boxY = (canvas.height - boxH) / 2;
+
+        if (mouseX >= boxX + boxW - 45 && mouseX <= boxX + boxW - 15 && mouseY >= boxY + 15 && mouseY <= boxY + 45) {
+            isInventoryOpen = false;
+            selectedInventoryIndex = null;
+            return;
+        }
+
+        for (let i = 0; i < player.inventory.length; i++) {
+            const row = Math.floor(i / 6);
+            const col = i % 6;
+            const ix = boxX + 35 + (col * 80);
+            const iy = boxY + 90 + (row * 80);
+            if (mouseX >= ix && mouseX <= ix + 70 && mouseY >= iy && mouseY <= iy + 70) {
+                selectedInventoryIndex = i;
+                return;
+            }
+        }
+
+        if (selectedInventoryIndex !== null && player.inventory[selectedInventoryIndex]) {
+            const targetItemKey = player.inventory[selectedInventoryIndex].itemKey;
+            const bY = boxY + 290;
+            const bW = (slotSize * 5) + (slotSpacing * 4);
+            const bX = boxX + (boxW - bW) / 2;
+
+            for (let idx = 1; idx <= 5; idx++) {
+                const sx = bX + (idx - 1) * (slotSize + slotSpacing);
+                if (mouseX >= sx && mouseX <= sx + slotSize && mouseY >= bY && mouseY <= bY + slotSize) {
+                    for (let s = 1; s < 6; s++) {
+                        if (TOOLBELT_SLOTS[s] && TOOLBELT_SLOTS[s].itemKey === targetItemKey) {
+                            TOOLBELT_SLOTS[s] = null;
+                        }
+                    }
+                    TOOLBELT_SLOTS[idx] = {
+                        type: "item",
+                        itemKey: targetItemKey,
+                        ...ITEM_MASTER[targetItemKey]
+                    };
+                    selectedInventoryIndex = null;
+                    return;
+                }
+            }
+        }
+        return; 
+    }
+
+    // --- 通常時のツールベルトのタップ判定 ---
+    if (mouseY >= beltY && mouseY <= beltY + slotSize && mouseX >= beltX && mouseX <= beltX + totalBeltWidth) {
+        const clickedSlot = Math.floor((mouseX - beltX) / (slotSize + slotSpacing));
+        if (clickedSlot >= 0 && clickedSlot < 6) {
+            player.activeSlot = clickedSlot;
+            return; 
+        }
+    }
+
+    const worldX = (mouseX / currentScale) + cameraX;
+    const worldY = (mouseY / currentScale) + cameraY;
+
+    const blockX = Math.floor(worldX / BLOCK_SIZE);
+    const blockY = Math.floor(worldY / BLOCK_SIZE);
+
+    if (blockX >= 0 && blockX < MAP_WIDTH && blockY >= 0 && blockY < MAP_HEIGHT) {
+        const playerCenterX = player.x + player.width / 2;
+        const playerGridX = Math.floor(playerCenterX / BLOCK_SIZE);
+        const playerGridY = Math.floor((player.y + player.height / 2) / BLOCK_SIZE);
+        
+        const distX = Math.abs(playerGridX - blockX);
+        const distY = Math.abs(playerGridY - blockY);
+        const isNextTo = (distX <= 1 && distY <= 1);
+
+        const activeSlotItem = TOOLBELT_SLOTS[player.activeSlot];
+
+        // --- バケツ（液体回収・再設置）のロジック ---
+        if (activeSlotItem && activeSlotItem.type === "bucket") {
+            if (isNextTo) {
+                const targetBlock = map[blockX][blockY];
+                if ((targetBlock.id === 11 || targetBlock.id === 12) && targetBlock.fluidLevel > 0.3) {
+                    const fluidItemKey = BLOCK_TYPES[targetBlock.id].itemKey;
+                    addItemToInventory(fluidItemKey);
+                    
+                    targetBlock.id = 0;
+                    targetBlock.fluidLevel = 0.0;
+                    player.swingTimer = 10;
+                    return;
+                }
+            }
+        }
+
+        if (map[blockX][blockY].id !== 0 && map[blockX][blockY].id !== 11 && map[blockX][blockY].id !== 12) {
+            // --- 採掘（ソリッドブロック限定） ---
+            if (isNextTo && player.targetBlockX === blockX && player.targetBlockY === blockY) {
+                const block = map[blockX][blockY];
+                block.hp -= 1;
+                player.swingTimer = 10; 
+
+                if (block.hp <= 0) {
+                    const itemKey = BLOCK_TYPES[block.id].itemKey;
+                    addItemToInventory(itemKey);
+
+                    block.id = 0;
+                    block.hp = 0;
+                    player.targetBlockX = null;
+                    player.targetBlockY = null;
+                    player.isMining = false;
+                }
+            } else {
+                player.targetBlockX = blockX;
+                player.targetBlockY = blockY;
+                player.isMining = true;
+            }
+        } else {
+            // --- 空地または流体マスをタップした場合（再設置ロジック） ---
+            if (activeSlotItem && activeSlotItem.type === "item" && getInventoryItemCount(activeSlotItem.itemKey) > 0) {
+                
+                const pLeftGrid = Math.floor(player.x / BLOCK_SIZE);
+                const pRightGrid = Math.floor((player.x + player.width) / BLOCK_SIZE);
+                const pTopGrid = Math.floor(player.y / BLOCK_SIZE);
+                const pBottomGrid = Math.floor((player.y + player.height) / BLOCK_SIZE);
+
+                const overlapsPlayer = (blockX >= pLeftGrid && blockX <= pRightGrid && blockY >= pTopGrid && blockY <= pBottomGrid);
+
+                if (!overlapsPlayer) {
+                    const blockId = ITEM_TO_BLOCK_ID[activeSlotItem.itemKey];
+                    if (consumeItemFromInventory(activeSlotItem.itemKey)) {
+                        map[blockX][blockY].id = blockId;
+                        if (blockId === 11 || blockId === 12) {
+                            map[blockX][blockY].fluidLevel = 1.0; 
+                        } else {
+                            map[blockX][blockY].hp = BLOCK_TYPES[blockId].hp;
+                            map[blockX][blockY].fluidLevel = 0.0;
+                        }
+                        
+                        player.targetBlockX = null;
+                        player.targetBlockY = null;
+                        player.isMining = false;
+                        return;
+                    }
+                }
+            }
+
+            player.targetBlockX = blockX;
+            player.targetBlockY = blockY;
+            player.isMining = false;
+        }
+    }
+}
+
+// 2点間の距離を計算（ピンチズーム用）
+function getPinchDist(t1, t2) {
+    return Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
+}
+
+// --- イベント登録 ---
+canvas.addEventListener("mousedown", (e) => {
+    handleInput(e.clientX, e.clientY);
+});
+
+canvas.addEventListener("touchstart", (e) => {
+    e.preventDefault(); 
+    if (e.touches.length === 1) {
+        handleInput(e.touches[0].clientX, e.touches[0].clientY);
+    } else if (e.touches.length === 2) {
+        initialPinchDist = getPinchDist(e.touches[0], e.touches[1]);
+    }
+}, { passive: false });
+
+canvas.addEventListener("touchmove", (e) => {
+    e.preventDefault();
+    if (e.touches.length === 2 && initialPinchDist !== null) {
+        const currentDist = getPinchDist(e.touches[0], e.touches[1]);
+        const factor = currentDist / initialPinchDist;
+        
+        let newScale = currentScale * (1 + (factor - 1) * 0.1);
+        currentScale = Math.max(MIN_SCALE, Math.min(newScale, MAX_SCALE));
+        
+        initialPinchDist = currentDist; 
+    }
+}, { passive: false });
+
+canvas.addEventListener("touchend", (e) => {
+    if (e.touches.length < 2) {
+        initialPinchDist = null;
+    }
+});
+
+// --- 更新処理 ---
+function update() {
+    if (isInventoryOpen || isSettingsOpen) return; // 各種UI画面表示中は物理更新をストップ
+
+    updateFluids();
+
+    // --- 1. 重力・落下処理 ---
+    const checkLeftFoot = player.x + 2;
+    const checkRightFoot = player.x + player.width - 2;
+    const checkFootY = player.y + player.height + 1;
+
+    const onGround = isSolid(checkLeftFoot, checkFootY) || isSolid(checkRightFoot, checkFootY);
+
+    if (!onGround) {
+        player.y += 4; 
+        const landedY = Math.floor((player.y + player.height) / BLOCK_SIZE) * BLOCK_SIZE;
+        if (isSolid(checkLeftFoot, player.y + player.height) || isSolid(checkRightFoot, player.y + player.height)) {
+            player.y = landedY - player.height;
+        }
+    }
+
+    if (player.swingTimer > 0) {
+        player.swingTimer--;
+    }
+
+    // --- 2. 移動＆段差越え処理 ---
+    if (player.targetBlockX !== null && player.targetBlockY !== null) {
+        const targetWorldX = player.targetBlockX * BLOCK_SIZE + BLOCK_SIZE / 2;
+        const playerCenterX = player.x + player.width / 2;
+
+        const playerGridX = Math.floor(playerCenterX / BLOCK_SIZE);
+        const playerGridY = Math.floor((player.y + player.height / 2) / BLOCK_SIZE);
+        
+        const distX = Math.abs(playerGridX - player.targetBlockX);
+        const distY = Math.abs(playerGridY - player.targetBlockY);
+
+        const isNextTo = (distX <= 1 && distY <= 1);
+
+        if (isNextTo && player.isMining) {
+            // 準備完了状態
+        } else {
+            const diffX = targetWorldX - playerCenterX;
+
+            if (Math.abs(diffX) > 5) {
+                let moveDir = 0;
+
+                if (diffX > 0) {
+                    moveDir = 1;
+                    player.facing = "right";
+                } else {
+                    moveDir = -1;
+                    player.facing = "left";
+                }
+
+                const frontX = (moveDir === 1) ? player.x + player.width + player.speed : player.x - player.speed;
+                
+                const isWallHead   = isSolid(frontX, player.y + 2);
+                const isWallBody   = isSolid(frontX, player.y + player.height / 2);
+                const isWallFoot   = isSolid(frontX, player.y + player.height - 5);
+
+                if (isWallFoot || isWallBody || isWallHead) {
+                    const stepUpY = player.y - BLOCK_SIZE;
+                    const isStepWallHead = isSolid(frontX, stepUpY + 2);
+                    const isStepWallBody = isSolid(frontX, stepUpY + player.height / 2);
+                    const isStepWallFoot = isSolid(frontX, stepUpY + player.height - 5);
+
+                    if (!isStepWallHead && !isStepWallBody && !isStepWallFoot) {
+                        player.x += moveDir * player.speed;
+                        player.y -= BLOCK_SIZE; 
+                    } else {
+                        if (!player.isMining) {
+                            player.targetBlockX = null;
+                            player.targetBlockY = null;
+                        }
+                    }
+                } else {
+                    player.x += moveDir * player.speed;
+                }
+            } else {
+                if (!player.isMining && distY <= 1) {
+                    player.targetBlockX = null;
+                    player.targetBlockY = null;
+                }
+            }
+        }
+    }
+
+    cameraX = player.x - (canvas.width / currentScale) / 2 + player.width / 2;
+    cameraY = player.y - (canvas.height / currentScale) / 2 + player.height / 2;
+
+    cameraX = Math.max(0, Math.min(cameraX, MAP_WIDTH * BLOCK_SIZE - canvas.width / currentScale));
+    cameraY = Math.max(0, Math.min(cameraY, MAP_HEIGHT * BLOCK_SIZE - canvas.height / currentScale));
+}
+
+// --- ビジュアルを描画する関数 ---
+function drawBlock(ctx, id, x, y, hp, drawX, drawY, fluidLevel) {
+    const type = BLOCK_TYPES[id];
+    
+    if (type.pattern === "fluid") {
+        ctx.fillStyle = type.baseColor;
+        const fluidHeight = BLOCK_SIZE * Math.min(1.0, fluidLevel || 1.0);
+        ctx.fillRect(drawX, drawY + (BLOCK_SIZE - fluidHeight), BLOCK_SIZE, fluidHeight);
+        return;
+    }
+    
+    let grad = ctx.createLinearGradient(drawX, drawY, drawX, drawY + BLOCK_SIZE);
+    grad.addColorStop(0, type.accentColor);
+    grad.addColorStop(1, type.baseColor);
+    ctx.fillStyle = grad;
+    ctx.fillRect(drawX, drawY, BLOCK_SIZE, BLOCK_SIZE);
+
+    ctx.fillStyle = "rgba(0, 0, 0, 0.15)";
+    if (type.pattern === "dirt") {
+        ctx.fillRect(drawX + 6, drawY + 8, 4, 4);
+        ctx.fillRect(drawX + 22, drawY + 14, 5, 3);
+        ctx.fillRect(drawX + 12, drawY + 26, 4, 4);
+    } else if (type.pattern === "stone") {
+        ctx.beginPath();
+        ctx.strokeStyle = "rgba(255,255,255,0.1)";
+        ctx.moveTo(drawX, drawY + 10);
+        ctx.lineTo(drawX + 15, drawY + 15);
+        ctx.lineTo(drawX + 40, drawY + 30);
+        ctx.stroke();
+    } else if (type.pattern === "ore") {
+        ctx.fillStyle = type.accentColor;
+        ctx.shadowColor = type.accentColor;
+        ctx.shadowBlur = 4;
+        ctx.fillRect(drawX + 10, drawY + 10, 8, 8);
+        ctx.fillRect(drawX + 24, drawY + 20, 10, 6);
+        ctx.fillRect(drawX + 8, drawY + 26, 6, 6);
+        ctx.shadowBlur = 0; 
+    } else if (type.pattern === "gem") {
+        ctx.fillStyle = type.accentColor;
+        ctx.beginPath();
+        ctx.moveTo(drawX + 20, drawY + 8);
+        ctx.lineTo(drawX + 32, drawY + 20);
+        ctx.lineTo(drawX + 20, drawY + 32);
+        ctx.lineTo(drawX + 8, drawY + 20);
+        ctx.closePath();
+        ctx.fill();
+    }
+
+    ctx.strokeStyle = "rgba(0, 0, 0, 0.25)";
+    ctx.lineWidth = 1;
+    ctx.strokeRect(drawX, drawY, BLOCK_SIZE, BLOCK_SIZE);
+
+    const maxHp = type.hp;
+    if (hp < maxHp) {
+        ctx.strokeStyle = "rgba(0, 0, 0, 0.6)";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(drawX + 5, drawY + 5);
+        ctx.lineTo(drawX + BLOCK_SIZE - 5, drawY + BLOCK_SIZE - 5);
+        if (hp <= maxHp / 2) {
+            ctx.moveTo(drawX + BLOCK_SIZE - 5, drawY + 5);
+            ctx.lineTo(drawX + 5, drawY + BLOCK_SIZE - 5);
+        }
+        ctx.stroke();
+    }
+}
+
+// --- 描画処理 ---
+function draw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    ctx.save();
+    ctx.scale(currentScale, currentScale);
+
+    const viewWidth = canvas.width / currentScale;
+    const viewHeight = canvas.height / currentScale;
+
+    if (cameraY < 12 * BLOCK_SIZE) {
+        let skyGrad = ctx.createLinearGradient(0, 0 - cameraY, 0, (10 * BLOCK_SIZE) - cameraY);
+        skyGrad.addColorStop(0, "#87CEEB"); 
+        skyGrad.addColorStop(1, "#4682B4"); 
+        ctx.fillStyle = skyGrad;
+        ctx.fillRect(0, 0, viewWidth, (10 * BLOCK_SIZE) - cameraY);
+    }
+
+    const startX = Math.floor(cameraX / BLOCK_SIZE);
+    const endX = Math.ceil((cameraX + viewWidth) / BLOCK_SIZE);
+    const startY = Math.floor(cameraY / BLOCK_SIZE);
+    const endY = Math.ceil((cameraY + viewHeight) / BLOCK_SIZE);
+
+    for (let x = startX; x < endX; x++) {
+        for (let y = startY; y < endY; y++) {
+            if (x < 0 || x >= MAP_WIDTH || y < 0 || y >= MAP_HEIGHT) continue;
+
+            const block = map[x][y];
+            if (block.id === 0) continue; 
+
+            const drawX = x * BLOCK_SIZE - cameraX;
+            const drawY = y * BLOCK_SIZE - cameraY;
+
+            drawBlock(ctx, block.id, x, y, block.hp, drawX, drawY, block.fluidLevel);
+        }
+    }
+
+    if (player.targetBlockX !== null && player.targetBlockY !== null) {
+        const tDrawX = player.targetBlockX * BLOCK_SIZE - cameraX;
+        const tDrawY = player.targetBlockY * BLOCK_SIZE - cameraY;
+        ctx.strokeStyle = player.isMining ? "rgba(255, 0, 0, 0.8)" : "rgba(255, 255, 255, 0.5)";
+        ctx.lineWidth = 2;
+        ctx.strokeRect(tDrawX, tDrawY, BLOCK_SIZE, BLOCK_SIZE);
+    }
+
+    const pDrawX = player.x - cameraX;
+    const pDrawY = player.y - cameraY;
+
+    ctx.fillStyle = "#3A5FCD";
+    ctx.fillRect(pDrawX, pDrawY + 12, player.width, player.height - 12);
+
+    ctx.fillStyle = "#FFD700";
+    ctx.fillRect(pDrawX + 2, pDrawY, player.width - 4, 12);
+    ctx.fillStyle = "#FFF";
+    if (player.facing === "right") {
+        ctx.fillRect(pDrawX + player.width - 4, pDrawY + 4, 4, 4);
+    } else {
+        ctx.fillRect(pDrawX, pDrawY + 4, 4, 4);
+    }
+
+    ctx.fillStyle = "#FFD39B";
+    ctx.fillRect(pDrawX + 4, pDrawY + 12, player.width - 8, 8);
+
+    ctx.strokeStyle = "#8B7D6B";
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    let swing = (player.swingTimer > 0) ? 12 : 0;
+    
+    if (player.facing === "right") {
+        ctx.moveTo(pDrawX + player.width, pDrawY + 16 + swing);
+        ctx.lineTo(pDrawX + player.width + 10, pDrawY + 6 - swing);
+    } else {
+        ctx.moveTo(pDrawX, pDrawY + 16 + swing);
+        ctx.lineTo(pDrawX - 10, pDrawY + 6 - swing);
+    }
+    ctx.stroke();
+
+    ctx.restore(); 
+
+    // --- ライトエフェクト ---
+    ctx.save();
+    
+    const lightCenterX = (player.x + player.width / 2 - cameraX) * currentScale;
+    const lightCenterY = (player.y + player.height / 2 - cameraY) * currentScale;
+    
+    let lightRadius = 120 * currentScale;
+    if (player.swingTimer > 0) {
+        lightRadius = 145 * currentScale; 
+    }
+
+    const undergroundStartY = (10 * BLOCK_SIZE - cameraY) * currentScale;
+
+    if (undergroundStartY < canvas.height) {
+        const darkY = Math.max(0, undergroundStartY);
+        ctx.fillStyle = "rgba(10, 10, 10, 1.0)";
+        
+        if (darkY < lightCenterY - lightRadius) {
+            ctx.fillRect(0, darkY, canvas.width, (lightCenterY - lightRadius) - darkY);
+        }
+        if (lightCenterY + lightRadius > darkY) {
+            ctx.fillRect(0, Math.max(darkY, lightCenterY + lightRadius), canvas.width, canvas.height - Math.max(darkY, lightCenterY + lightRadius));
+        }
+        const startLeftY = Math.max(darkY, lightCenterY - lightRadius);
+        const endLeftY = Math.max(darkY, lightCenterY + lightRadius);
+        if (endLeftY > startLeftY) {
+            ctx.fillRect(0, startLeftY, lightCenterX - lightRadius, endLeftY - startLeftY);
+            ctx.fillRect(lightCenterX + lightRadius, startLeftY, canvas.width - (lightCenterX + lightRadius), endLeftY - startLeftY);
+        }
+    }
+
+    let lightGrad = ctx.createRadialGradient(
+        lightCenterX, lightCenterY, 15 * currentScale, 
+        lightCenterX, lightCenterY, lightRadius
+    );
+    lightGrad.addColorStop(0, "rgba(10, 10, 10, 0.0)");       
+    lightGrad.addColorStop(0.5, "rgba(10, 10, 10, 0.4)");     
+    lightGrad.addColorStop(1, "rgba(10, 10, 10, 1.0)");       
+
+    ctx.save();
+    if (undergroundStartY > 0) {
+        ctx.beginPath();
+        ctx.rect(0, undergroundStartY, canvas.width, canvas.height - undergroundStartY);
+        ctx.clip();
+    }
+
+    ctx.fillStyle = lightGrad;
+    ctx.fillRect(lightCenterX - lightRadius, lightCenterY - lightRadius, lightRadius * 2, lightRadius * 2);
+    ctx.restore();
+
+    ctx.restore();
+
+    // --- HUD・UIレイヤー描画 ---
+    ctx.save();
+
+    // 1. インベントリ開閉ボタンの描画
+    ctx.fillStyle = "rgba(30, 30, 30, 0.85)";
+    ctx.strokeStyle = "#555";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.roundRect(invBtnX, invBtnY, invBtnSize, invBtnSize, 8);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle = "#fff";
+    ctx.font = "26px sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("🎒", invBtnX + invBtnSize / 2, invBtnY + invBtnSize / 2 + 1);
+
+    // 1b. 設定ボタン（⚙️）の描画
+    ctx.fillStyle = "rgba(30, 30, 30, 0.85)";
+    ctx.strokeStyle = "#555";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.roundRect(setBtnX, setBtnY, setBtnSize, setBtnSize, 8);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle = "#fff";
+    ctx.font = "26px sans-serif";
+    ctx.fillText("⚙️", setBtnX + setBtnSize / 2, setBtnY + setBtnSize / 2 + 1);
+
+    // 2. 常時表示ツールベルトの描画
+    ctx.fillStyle = "rgba(20, 20, 20, 0.85)";
+    ctx.strokeStyle = "rgba(68, 68, 68, 0.8)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.roundRect(beltX - 10, beltY - 10, totalBeltWidth + 20, slotSize + 20, 12);
+    ctx.fill();
+    ctx.stroke();
+
+    for (let idx = 0; idx < 6; idx++) {
+        const sx = beltX + idx * (slotSize + slotSpacing);
+        const sy = beltY;
+        const slot = TOOLBELT_SLOTS[idx];
+
+        ctx.fillStyle = (player.activeSlot === idx) ? "rgba(85, 119, 221, 0.3)" : "rgba(40, 40, 40, 0.6)";
+        ctx.strokeStyle = (player.activeSlot === idx) ? "#6699FF" : "#444444";
+        ctx.lineWidth = (player.activeSlot === idx) ? 3 : 1.5;
+        
+        ctx.beginPath();
+        ctx.roundRect(sx, sy, slotSize, slotSize, 6);
+        ctx.fill();
+        ctx.stroke();
+
+        if (slot) {
+            if (slot.type === "tool" || slot.type === "bucket") {
+                ctx.fillStyle = "#ffffff";
+                ctx.font = "24px sans-serif";
+                ctx.textAlign = "center";
+                ctx.textBaseline = "middle";
+                ctx.fillText(slot.icon, sx + slotSize / 2, sy + slotSize / 2 + 2);
+            } else if (slot.type === "item") {
+                const count = getInventoryItemCount(slot.itemKey);
+                
+                if (count > 0) {
+                    const iconSize = 24;
+                    const bx = sx + (slotSize - iconSize) / 2;
+                    const by = sy + (slotSize - iconSize) / 2 - 2;
+
+                    if (slot.pattern === "bucket_fluid") {
+                        ctx.fillStyle = "#888";
+                        ctx.fillRect(bx + 4, by + 6, 16, 14);
+                        ctx.fillStyle = slot.baseColor;
+                        ctx.fillRect(bx + 6, by + 4, 12, 6);
+                    } else {
+                        let itemGrad = ctx.createLinearGradient(bx, by, bx, by + iconSize);
+                        itemGrad.addColorStop(0, slot.accentColor);
+                        itemGrad.addColorStop(1, slot.baseColor);
+                        ctx.fillStyle = itemGrad;
+                        ctx.fillRect(bx, by, iconSize, iconSize);
+
+                        if (slot.pattern === "ore") {
+                            ctx.fillStyle = slot.accentColor;
+                            ctx.fillRect(bx + 4, by + 4, 5, 5);
+                        } else if (slot.pattern === "gem") {
+                            ctx.fillStyle = slot.accentColor;
+                            ctx.fillRect(bx + 6, by + 6, 12, 12);
+                        }
+                    }
+
+                    ctx.strokeStyle = "rgba(0, 0, 0, 0.3)";
+                    ctx.lineWidth = 1;
+                    ctx.strokeRect(bx, by, iconSize, iconSize);
+
+                    ctx.fillStyle = "#ffffff";
+                    ctx.font = "bold 11px Arial";
+                    ctx.textAlign = "right";
+                    ctx.textBaseline = "bottom";
+                    ctx.fillText(count, sx + slotSize - 4, sy + slotSize - 2);
+                }
+            }
+        }
+    }
+
+    // 3. インベントリ詳細画面の描画
+    if (isInventoryOpen) {
+        const boxW = 550;
+        const boxH = 380;
+        const boxX = (canvas.width - boxW) / 2;
+        const boxY = (canvas.height - boxH) / 2;
+
+        ctx.fillStyle = "rgba(0, 0, 0, 0.6)";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        ctx.fillStyle = "#222222";
+        ctx.strokeStyle = "#444444";
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.roundRect(boxX, boxY, boxW, boxH, 16);
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.fillStyle = "#ffffff";
+        ctx.font = "bold 18px sans-serif";
+        ctx.textAlign = "left";
+        ctx.textBaseline = "top";
+        ctx.fillText(`${SYS_TEXTS.invTitle[currentLang]} (${player.inventory.length} / ${player.maxSlots} ${SYS_TEXTS.slotsInUse[currentLang]})`, boxX + 25, boxY + 22);
+
+        ctx.fillStyle = "rgba(255,255,255,0.1)";
+        ctx.beginPath();
+        ctx.roundRect(boxX + boxW - 45, boxY + 15, 30, 30, 6);
+        ctx.fill();
+        ctx.fillStyle = "#aaa";
+        ctx.font = "16px sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText("✕", boxX + boxW - 30, boxY + 30);
+
+        for (let i = 0; i < player.maxSlots; i++) {
+            const row = Math.floor(i / 6);
+            const col = i % 6;
+            const ix = boxX + 35 + (col * 80);
+            const iy = boxY + 90 + (row * 80);
+            const iSize = 70;
+
+            ctx.fillStyle = "#1a1a1a";
+            ctx.strokeStyle = "#333333";
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.roundRect(ix, iy, iSize, iSize, 8);
+            ctx.fill();
+            ctx.stroke();
+
+            if (player.inventory[i]) {
+                const invSlot = player.inventory[i];
+                const item = ITEM_MASTER[invSlot.itemKey];
+
+                ctx.fillStyle = (selectedInventoryIndex === i) ? "rgba(230, 180, 50, 0.2)" : "#2a2a2a";
+                ctx.strokeStyle = (selectedInventoryIndex === i) ? "#FFCC33" : "#444444";
+                ctx.lineWidth = (selectedInventoryIndex === i) ? 3 : 1.5;
+                ctx.beginPath();
+                ctx.roundRect(ix, iy, iSize, iSize, 8);
+                ctx.fill();
+                ctx.stroke();
+
+                const bSize = 34;
+                const bx = ix + (iSize - bSize) / 2;
+                const by = iy + (iSize - bSize) / 2 - 6;
+
+                if (item.pattern === "bucket_fluid") {
+                    ctx.fillStyle = "#666";
+                    ctx.fillRect(bx + 6, by + 10, 22, 18);
+                    ctx.fillStyle = item.baseColor;
+                    ctx.fillRect(bx + 8, by + 4, 18, 8);
+                } else {
+                    let itemGrad = ctx.createLinearGradient(bx, by, bx, by + bSize);
+                    itemGrad.addColorStop(0, item.accentColor);
+                    itemGrad.addColorStop(1, item.baseColor);
+                    ctx.fillStyle = itemGrad;
+                    ctx.fillRect(bx, by, bSize, bSize);
+                }
+
+                ctx.fillStyle = "#ccc";
+                ctx.font = "10px sans-serif";
+                ctx.textAlign = "center";
+                // ローカライズ辞書から動的に名前を切断取得
+                const itemName = item.name[currentLang];
+                ctx.fillText(itemName.substring(0, 5), ix + iSize / 2, iy + iSize - 20);
+
+                ctx.fillStyle = "#fff";
+                ctx.font = "bold 12px Arial";
+                ctx.fillText(`${invSlot.count}/50`, ix + iSize / 2, iy + iSize - 6);
+            }
+        }
+
+        if (selectedInventoryIndex !== null && player.inventory[selectedInventoryIndex]) {
+            ctx.fillStyle = "#FFCC33";
+            ctx.font = "13px sans-serif";
+            ctx.textAlign = "center";
+            ctx.fillText(SYS_TEXTS.beltTarget[currentLang], boxX + boxW / 2, boxY + 265);
+
+            const bW = (slotSize * 5) + (slotSpacing * 4);
+            const bX = boxX + (boxW - bW) / 2;
+            const bY = boxY + 295;
+
+            for (let idx = 1; idx <= 5; idx++) {
+                const sx = bX + (idx - 1) * (slotSize + slotSpacing);
+                const tSlot = TOOLBELT_SLOTS[idx];
+
+                ctx.fillStyle = "#333333";
+                ctx.strokeStyle = "#666666";
+                ctx.lineWidth = 1.5;
+                ctx.beginPath();
+                ctx.roundRect(sx, bY, slotSize, slotSize, 6);
+                ctx.fill();
+                ctx.stroke();
+
+                if (tSlot) {
+                    const iconSize = 20;
+                    const bx = sx + (slotSize - iconSize) / 2;
+                    const by = bY + (slotSize - iconSize) / 2;
+                    ctx.fillStyle = tSlot.baseColor || "#555";
+                    ctx.fillRect(bx, by, iconSize, iconSize);
+                }
+
+                ctx.fillStyle = "rgba(255,255,255,0.4)";
+                ctx.font = "11px Arial";
+                ctx.textAlign = "left";
+                ctx.fillText(idx, sx + 4, bY + 12);
+            }
+        } else {
+            ctx.fillStyle = "#888888";
+            ctx.font = "13px sans-serif";
+            ctx.textAlign = "center";
+            ctx.fillText(SYS_TEXTS.beltHint[currentLang], boxX + boxW / 2, boxY + 280);
+        }
+    }
+
+    // 4. 設定メニュー詳細画面の描画
+    if (isSettingsOpen) {
+        const boxW = 400;
+        const boxH = 480;
+        const boxX = (canvas.width - boxW) / 2;
+        const boxY = (canvas.height - boxH) / 2;
+
+        ctx.fillStyle = "rgba(0, 0, 0, 0.6)";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        ctx.fillStyle = "#282828";
+        ctx.strokeStyle = "#444";
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.roundRect(boxX, boxY, boxW, boxH, 16);
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.fillStyle = "#fff";
+        ctx.font = "bold 18px sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "top";
+        ctx.fillText(SYS_TEXTS.setTitle[currentLang], boxX + boxW / 2, boxY + 22);
+
+        // 閉じる[✕]ボタン
+        ctx.fillStyle = "rgba(255,255,255,0.1)";
+        ctx.beginPath();
+        ctx.roundRect(boxX + boxW - 45, boxY + 15, 30, 30, 6);
+        ctx.fill();
+        ctx.fillStyle = "#aaa";
+        ctx.font = "16px sans-serif";
+        ctx.textBaseline = "middle";
+        ctx.fillText("✕", boxX + boxW - 30, boxY + 30);
+
+        // 各種設定メニューボタンの配列描画（一括構造化データから動的マッピング）
+        const buttons = [
+            { text: SYS_TEXTS.saveBtn[currentLang], color: "#4682B4" },
+            { text: SYS_TEXTS.loadBtn[currentLang], color: "#4682B4" },
+            { text: SYS_TEXTS.expBtn[currentLang],  color: "#2E8B57" },
+            { text: SYS_TEXTS.impBtn[currentLang],  color: "#2E8B57" },
+            { text: SYS_TEXTS.langBtn[currentLang], color: "#8A2BE2" },
+            { text: SYS_TEXTS.updateBtn[currentLang], color: "#777777" },
+            { text: isBgmOn ? SYS_TEXTS.bgmOn[currentLang] : SYS_TEXTS.bgmOff[currentLang], color: isBgmOn ? "#CD5C5C" : "#555" },
+            { text: isSeOn ? SYS_TEXTS.seOn[currentLang] : SYS_TEXTS.seOff[currentLang], color: isSeOn ? "#CD5C5C" : "#555" },
+            { text: SYS_TEXTS.donateBtn[currentLang], color: "#D2691E" }
+        ];
+
+        const btnW = 320;
+        const btnH = 36;
+        const sX = boxX + 40;
+        const startY = boxY + 70;
+        const stepY = 44;
+
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.font = "bold 14px sans-serif";
+
+        buttons.forEach((btn, idx) => {
+            const bY = startY + idx * stepY;
+            ctx.fillStyle = btn.color;
+            ctx.beginPath();
+            ctx.roundRect(sX, bY, btnW, btnH, 6);
+            ctx.fill();
+
+            ctx.fillStyle = "#ffffff";
+            ctx.fillText(btn.text, sX + btnW / 2, bY + btnH / 2 + 1);
+        });
+    }
+
+    // 5. ゲーム内通知ログ（トースト）の描画処理
+    if (uiLogTimer > 0 && uiLogKey) {
+        ctx.fillStyle = "rgba(0, 0, 0, 0.85)";
+        ctx.strokeStyle = "#FFCC33";
+        ctx.lineWidth = 1.5;
+        
+        const currentMsg = SYS_TEXTS[uiLogKey][currentLang];
+        const tw = ctx.measureText(currentMsg).width + 40;
+        const lx = (canvas.width - tw) / 2;
+        const ly = 90;
+        
+        ctx.beginPath();
+        ctx.roundRect(lx, ly, tw, 36, 18);
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.fillStyle = "#FFCC33";
+        ctx.font = "bold 14px sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(currentMsg, canvas.width / 2, ly + 18);
+        
+        uiLogTimer--;
+    }
+
+    ctx.restore();
+}
+
+// --- メインループ ---
+function gameLoop() {
+    update();
+    draw();
+    requestAnimationFrame(gameLoop);
+}
+
+// 初期カメラ位置を地表にセット
+cameraX = player.x - canvas.width / 2 + player.width / 2;
+cameraY = player.y - canvas.height / 2 + player.height / 2;
+
+// ゲーム開始
+generateMap();
+gameLoop();
+</script>
+
+</body>
+</html>
